@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile Face Tracking</title>
+    <!-- 얼굴 인식 라이브러리 로드 -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <style>
+        /* 편안한 색상 테마 및 기본 초기화 */
+        :root {
+            --bg-color: #1e272e;
+            --panel-bg: #2c3e50;
+            --text-color: #ecf0f1;
+            --btn-color: #3498db;
+            --btn-hover: #2980b9;
+            --box-color: #00d2d3; /* 얼굴 추적 박스 색상 (시안) */
+        }
+        body {
+            margin: 0; 
+            padding: 10px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        /* 모바일에 맞춘 풀스크린 UI 컨테이너 (수정된 부분) */
+        .mobile-container {
+            background-color: var(--panel-bg);
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+        }
+
+        /* 상단 메뉴바 (터치하기 편하게 버튼 크기 확대) */
+        .menu-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #34495e;
+            padding-bottom: 15px;
+        }
+        button {
+            background-color: var(--btn-color);
+            color: white;
+            border: none;
+            padding: 15px 10px; /* 터치 영역 확대 */
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-weight: 600;
+            font-size: 16px;
+            flex: 1; /* 버튼 너비를 50:50으로 균일하게 배분 */
+        }
+        button:hover:not(:disabled) { 
+            background-color: var(--btn-hover); 
+        }
+        button:disabled { 
+            background-color: #7f8c8d; 
+            cursor: not-allowed; 
+            opacity: 0.6;
+        }
+
+        /* 비디오 및 캔버스 래퍼 */
+        .video-wrapper {
+            position: relative;
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        video, canvas {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* 영역에 맞게 꽉 채우되 비율 유지 */
+        }
+
+        /* 하단 상태바 */
+        #status {
+            margin-top: 15px;
+            font-size: 0.9em;
+            color: #bdc3c7;
+            text-align: center;
+            word-break: keep-all; /* 모바일에서 텍스트 줄바꿈 깔끔하게 */
+        }
+    </style>
+</head>
+<body>
+
+<div class="mobile-container">
+    <div class="menu-bar">
+        <button id="startBtn" disabled>카메라 켜기</button>
+        <button id="stopBtn" disabled>카메라 끄기</button>
+    </div>
+    
+    <div class="video-wrapper">
+        <video id="video" autoplay muted playsinline></video>
+        <!-- 비디오 위에 겹쳐서 박스를 그릴 캔버스 -->
+        <canvas id="canvas"></canvas>
+    </div>
+    
+    <div id="status">인공지능 모델을 불러오는 중입니다... 잠시만 기다려주세요.</div>
+</div>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusText = document.getElementById('status');
+    
+    let stream = null;
+    let detectionInterval = null;
+
+    // 가벼운 실시간 처리를 위해 Tiny Face Detector 모델 사용
+    const MODEL_URL = 'https://justadudewhohacks.github.io/face-api.js/models';
+
+    // 1. 모델 로드 함수
+    async function initModels() {
+        try {
+            await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+            statusText.innerText = "준비 완료! 카메라를 켜보세요.";
+            startBtn.disabled = false;
+        } catch (error) {
+            statusText.innerText = "모델 로드 실패. 인터넷 연결을 확인해주세요.";
+            console.error(error);
+        }
+    }
+
+    // 2. 카메라 켜기 이벤트
+    startBtn.addEventListener('click', async () => {
+        try {
+            // 모바일 전면 카메라를 우선적으로 사용하도록 facingMode 추가 설정
+            stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "user" } 
+            });
+            video.srcObject = stream;
+            
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            statusText.innerText = "카메라 작동 중... 얼굴을 추적합니다.";
+        } catch (err) {
+            statusText.innerText = "카메라 접근 권한이 차단되었습니다.";
+        }
+    });
+
+    // 3. 카메라 끄기 이벤트
+    stopBtn.addEventListener('click', () => {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            video.srcObject = null;
+        }
+        clearInterval(detectionInterval);
+        
+        // 캔버스 초기화
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        statusText.innerText = "카메라가 꺼졌습니다.";
+    });
+
+    // 4. 비디오 재생이 시작되면 얼굴 추적 루프 실행
+    video.addEventListener('play', () => {
+        const displaySize = { width: video.clientWidth, height: video.clientHeight };
+        faceapi.matchDimensions(canvas, displaySize);
+
+        detectionInterval = setInterval(async () => {
+            if (video.paused || video.ended) return;
+
+            // 얼굴 인식 수행
+            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
+            
+            // 캔버스 크기에 맞게 좌표 조정
+            const resizedDetections = faceapi.resizeResults(detections, displaySize);
+
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 인식된 얼굴마다 편안한 색상의 박스 그리기
+            resizedDetections.forEach(detection => {
+                const box = detection.box;
+                ctx.strokeStyle = '#00d2d3'; // 시안색상
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(box.x, box.y, box.width, box.height, 8); // 모서리가 둥근 박스
+                ctx.stroke();
+            });
+        }, 100); // 0.1초마다 프레임 갱신 (성능에 맞춰 조절 가능)
+    });
+
+    // 화면 크기나 방향(가로/세로) 변경 시 캔버스 크기 재조정 이벤트
+    window.addEventListener('resize', () => {
+        if (video.srcObject) {
+            faceapi.matchDimensions(canvas, { width: video.clientWidth, height: video.clientHeight });
+        }
+    });
+
+    // 스크립트 시작 지점
+    initModels();
+</script>
+</body>
+</html>
